@@ -1,0 +1,141 @@
+provider "aws" {
+  region = "us-east-1"
+  access_key = "AKIAXVDRSO4JO5LGASK5"
+  secret_key = "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"
+}
+
+# 1. create a VPC
+resource "aws_vpc" "projvpc" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "Proj-vpc"
+  } 
+}
+
+# 2. create a gateway
+resource "aws_internet_gateway" "projigw" {
+  vpc_id = aws_vpc.projvpc.id
+}
+
+# 3. custom route table
+resource "aws_route_table" "new_projrtb" {
+  vpc_id = aws_vpc.projvpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.projigw.id
+  }
+  tags = {
+    Name = "proj-rtb"
+  }
+}
+# 4. create an aws_subnet
+resource "aws_subnet" "projsub" {
+  vpc_id     = aws_vpc.projvpc.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = "us-east-1a"
+  tags = {
+    Name = "Projavz"
+  }
+}
+# 5. Associate subnet with route table
+resource "aws_route_table_association" "projsub-art" {
+  subnet_id      = aws_subnet.projsub.id
+  route_table_id = aws_route_table.new_projrtb.id
+}
+
+# 6. create a security group
+resource "aws_security_group" "projsg" {
+  name        = "allow_web"
+  description = "Allow web inbound traffic"
+  vpc_id      = aws_vpc.projvpc.id
+
+  ingress {
+    description      = "HTTPS WEB from VPC"
+    from_port        = 443
+    to_port          = 443
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description      = "HTTP WEB from VPC"
+    from_port        = 80
+    to_port          = 80
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description      = "SSH WEB from VPC"
+    from_port        = 22
+    to_port          = 22
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "allow_web"
+  }
+}
+
+# 7. create network interface
+resource "aws_network_interface" "projntkint" {
+  subnet_id       = aws_subnet.projsub.id
+  private_ips     = ["10.0.1.50"]
+  security_groups = [aws_security_group.projsg.id]
+}
+
+# 8. create elastic ip
+resource "aws_eip" "projeip" {
+  domain                    = "vpc"
+  network_interface         = aws_network_interface.projntkint.id
+  associate_with_private_ip = "10.0.1.50"
+  depends_on = [aws_internet_gateway.projigw]
+}
+
+# 9. This Creates an Instance using a key pair
+resource "aws_instance" "proginstance" {
+    ami = "ami-06aa3f7caf3a30282"
+    instance_type = "t2.micro"
+    availability_zone = "us-east-1a"
+    key_name = "ten"
+
+    network_interface {
+      device_index = 0
+      network_interface_id = aws_network_interface.projntkint.id
+    }
+    user_data = <<-EOF
+                #!/bin/bash
+                sudo apt update -y
+                sudo apt install apache2 -y
+                sudo systemctl start apache2
+                sudo bash -c 'echo my first web server > /var/www/html/index.html'
+                EOF
+
+    tags = {
+        Name = "web_server"
+    }
+}
+
+# 10. This targets a special output which you desire from your resources,
+output "server_private_ip_address" {
+  value = aws_instance.proginstance.private_ip
+}
+
+output "server_id" {
+  value = aws_instance.proginstance.id
+}
+
+output "server_public_ip" {
+  value = aws_eip.projeip.id
+}
